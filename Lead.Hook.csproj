@@ -7,9 +7,9 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <PackageId>Lead.Hook</PackageId>
-    <Version>2.1.0</Version>
+    <Version>2.1.1</Version>
     <Authors>Lead Contributors</Authors>
-    <Description>A dual-mode hook engine for .NET 8+ and .NET 10. IL rewriting at load time + runtime native patching, no Harmony required.</Description>
+    <Description>A dual-mode hook engine for .NET 10. IL rewriting at load time plus runtime native patching, no Harmony required.</Description>
     <PackageTags>hook;il-rewriting;mono.cecil;net10;method-hook;aop</PackageTags>
     <PackageProjectUrl>https://github.com/NetCraft-Dev/Lead.Hook</PackageProjectUrl>
     <RepositoryUrl>https://github.com/NetCraft-Dev/Lead.Hook.git</RepositoryUrl>
