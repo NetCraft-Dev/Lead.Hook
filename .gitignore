@@ -1,0 +1,13 @@
+[Bb]in/
+[Oo]bj/
+obj_v/
+.vs/
+.idea/
+*.user
+*.suo
+*.swp
+*.bak
+
+# Rust 侧的构建产物
+native/target/
+Cargo.lock
