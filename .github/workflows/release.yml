@@ -1,0 +1,103 @@
+name: release
+
+# 三个平台各编一份原生库 汇总后打进包里
+# 产物不进仓库 需要时由这里现编
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: push the packed package to nuget.org
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  native:
+    name: native ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            rid: win-x64
+            file: lead_hook_native.dll
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            rid: linux-x64
+            file: liblead_hook_native.so
+          # macos-latest 已经是 arm64 机器 编 x64 要在 Intel runner 上做
+          # macos-13 若下线 改回 macos-latest 并给 x64 target 配 cross linker
+          - os: macos-13
+            target: x86_64-apple-darwin
+            rid: osx-x64
+            file: liblead_hook_native.dylib
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: build
+        working-directory: native
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.rid }}
+          path: native/target/${{ matrix.target }}/release/${{ matrix.file }}
+          if-no-files-found: error
+
+  pack:
+    name: pack
+    needs: native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 下来的是 native-<rid>/<file> 要摊成 native/out/<rid>/<file> 才对得上 csproj 里那几条
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: native/out
+
+      - name: flatten native artifacts
+        run: |
+          cd native/out
+          for dir in native-*; do
+            rid="${dir#native-}"
+            mkdir -p "$rid"
+            mv "$dir"/* "$rid"/
+            rmdir "$dir"
+          done
+          find . -type f | sort
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: pack
+        run: dotnet pack Lead.Hook.csproj -c Release -o ./nupkg
+
+      - name: show package layout
+        run: |
+          cd nupkg
+          unzip -l Lead.Hook.*.nupkg | grep -E "runtimes|README" || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: nupkg/*.nupkg
+          if-no-files-found: error
+
+      - name: push to nuget.org
+        if: github.event_name == 'push' || inputs.publish
+        run: >
+          dotnet nuget push nupkg/*.nupkg
+          --api-key ${{ secrets.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate

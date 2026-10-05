@@ -1,17 +1,18 @@
 # Lead.Hook
 
-A dual-mode hook engine for .NET 10 — load-time IL rewriting **and** runtime native patching. No Harmony, no detours library.
+A hook engine for .NET 10 with three patching modes — load-time IL rewriting, runtime native patching, and runtime method-body injection through the CLR ReJIT API. No Harmony, no detours library.
 
 ```powershell
 dotnet add package Lead.Hook
 ```
 
-## Two modes
+## Three modes
 
 | Mode | When it runs | How | Reversible |
 |---|---|---|---|
 | `ILRewrite` | Before the assembly loads | Mono.Cecil rewrites IL instructions | No — permanent for the loaded assembly |
-| `RuntimePatch` | After methods are JIT-compiled | Overwrites the native entry with `jmp [rip+addr]` | Yes — `Unpatch()` restores the original bytes |
+| `RuntimePatch` | After methods are JIT-compiled | Overwrites the native entry with an absolute jump | Yes — `Unpatch()` restores the original bytes |
+| `RuntimeInject` | On code that is already running | The native layer submits a new method body through ReJIT | No |
 
 ## IL rewriting — hook types
 
@@ -25,6 +26,8 @@ dotnet add package Lead.Hook
 | `TypeCheck` | `isinst` / `castclass` | Intercept `as` / `is` checks |
 | `Box` | `box` / `unbox.any` | Intercept boxing and unboxing |
 | `FunctionPointer` | `ldftn` / `ldvirtftn` | Intercept function pointer acquisition |
+| `Probe` | Method entry and every exit | Keep the original body and instrument around it; safe on hot methods that may get inlined |
+| `Mark` | Method entry | Report once on entry, without timing |
 | `LocalRead` | `ldloc`, `ldloc.s`, `ldloc.0-3` | Intercept local variable reads |
 | `LocalWrite` | `stloc`, `stloc.s`, `stloc.0-3` | Intercept local variable writes |
 | `Constant` | `ldc.i4.*`, `ldc.i8`, `ldc.r4`, `ldc.r8`, `ldstr` | Intercept constant loads |
@@ -54,7 +57,7 @@ var result = engine.RewriteWithResult("TargetApp.dll");
 
 ## Host scoping and insertion placement
 
-By default a rule matches its anchor **everywhere** in the assembly. `InType` / `InMethod` narrow it to one host method, and `Placement` decides whether the replacement call replaces the anchor or is inserted next to it.
+By default a rule matches its anchor **everywhere** in the assembly. `InType` / `InMethod` narrow it to one host method, `Placement` decides whether the replacement call replaces the anchor or is inserted next to it, and `Ordinal` picks one occurrence when the anchor matches several times.
 
 ```csharp
 var engine = new HookBuilder()
@@ -74,8 +77,9 @@ var engine = new HookBuilder()
 Notes:
 
 - `InType` and `InMethod` are independent and optional. Leaving both empty restores the original global behavior.
+- `Ordinal` (0-based) selects which occurrence to hook when the same anchor appears more than once in scope.
 - Several rules may share one anchor; the first rule whose host scope matches wins.
-- `Before` / `After` apply only to instruction-level hook types (`CallSite`, `NewObj`, `FieldRead`, `FieldWrite`, `TypeCheck`, `Box`, `FunctionPointer`). `MethodBody` always replaces.
+- `Before` / `After` apply only to instruction-level hook types (`CallSite`, `NewObj`, `FieldRead`, `FieldWrite`, `TypeCheck`, `Box`, `FunctionPointer`). `MethodBody` always replaces, and the method-level `Probe` / `Mark` ignore placement entirely.
 - An inserted call reads the host's parameters and never touches what the anchor already pushed, so the surrounding stack stays balanced.
 
 ### Anchoring inside a method body
@@ -103,6 +107,53 @@ new HookRule("MyApp.Host", "Compute", typeof(Probe), nameof(Probe.OnConst),
 
 `Constant` compares by boxed type — `5` (int) and `5L` (long) are different anchors.
 
+## Mixins
+
+A mixin moves members out of a source type and into a target type, optionally adding interfaces to the target along the way.
+
+```csharp
+var engine = new HookBuilder()
+    .AddMixin(new MixinRule(
+        targetType: "MyApp.Player",
+        sourceAssembly: "MyApp.Extras",
+        sourceTypeName: "MyApp.Extras.PlayerExtras",
+        interfaces: new[] { new TypeRef("MyApp.Extras.IExtras") }))
+    .RegisterMixinSource("MyApp.Extras", () => File.ReadAllBytes("MyApp.Extras.dll"))
+    .Build();
+```
+
+How it works, and what to watch out for:
+
+- **It moves, it does not copy.** The members are transferred out of the source type, leaving an empty shell behind. Mod code must not keep using the source type afterwards.
+- **Load-time only.** Mixins change type layout, which ReJIT cannot do, so they never apply to `RuntimePatch` / `RuntimeInject`.
+- **Interface injection turns the moved methods virtual.** Interface dispatch only goes through the vtable, so a plain moved method makes the CLR report the interface as unimplemented and throw `TypeLoadException`. Moved public instance methods are marked `IsVirtual` + `IsNewSlot` — the latter is required, otherwise they would silently override a base-class member of the same name.
+- **Types are referenced by name, not loaded.** `TypeRef` builds a metadata reference from the name because mixins run before the target assembly enters memory; resolving by reflection at that point would pull unwritten assemblies in early.
+- **Nested types are not supported**, and a source that cannot be resolved — or that points at the target itself — is skipped silently. Catching those is the caller's job at assembly-build time.
+
+## Loading rewritten assemblies
+
+`RewritingLoadContext` rewrites on load, which is the only reliable moment before JIT. An assembly loaded this way always runs instrumented code, inlined or not.
+
+```csharp
+var engine = new HookBuilder()
+    .Hook("NetCraft.Game.World", "Tick")
+        .With(typeof(TickProbe), nameof(TickProbe.OnTick))
+    .Build();
+
+var context = new RewritingLoadContext(
+    name: "hooks",
+    directory: AppContext.BaseDirectory,
+    engine: engine,
+    excluded: new[] { "NetCraft.ModLoader" },
+    prefixes: "NetCraft");
+
+var assembly = context.LoadFromAssemblyName(new AssemblyName("NetCraft.Game"));
+```
+
+- `excluded` lists assemblies that must never be rewritten. It has to include the assembly that holds your probe types — otherwise the child context loads a second copy of them and reports land in a different set of statics.
+- A read or rewrite failure sets `LastError` and falls back to loading the original bytes rather than failing the load. `RewrittenAssemblies` records what was actually rewritten.
+- The context is created with `isCollectible: false`.
+
 ## Quick start — runtime patching
 
 ```csharp
@@ -120,35 +171,47 @@ runtime.Patch(typeof(MyClass).GetMethod("InstanceMethod")!,
 
 // Now calls to MyClass.StaticMethod() and obj.InstanceMethod() are redirected
 
-// Unpatch a specific method
-runtime.Unpatch(typeof(MyClass).GetMethod("StaticMethod")!);
+// Call the original implementation from a patched method
+var original = runtime.GetTrampoline<Func<int, int>>(typeof(MyClass).GetMethod("StaticMethod")!);
 
-// Unpatch everything
+// Unpatch a specific method, or everything
+runtime.Unpatch(typeof(MyClass).GetMethod("StaticMethod")!);
 runtime.UnpatchAll();
 ```
 
-## Mixed mode — IL rewrite plus runtime patch
+`ActivePatches` lists what is currently applied, and patching the same method twice throws `InvalidOperationException`.
+
+## Runtime method-body injection
+
+`RuntimeInject` rewrites a method the same way `ILRewrite` does, but hands the new body to the CLR at runtime instead of before load. It goes through the native layer, which hooks the profiling API.
 
 ```csharp
-var engine = new HookBuilder()
-    // IL rewrite rules (applied at assembly load)
-    .Hook("MyApp.TextPrinter", "GetText")
-        .With(typeof(MyReplacement), "GetText")
-
-    // Runtime patch rules (applied to already-loaded methods)
-    .Hook("MyApp.LiveService", "Process", HookType.CallSite, PatchMode.RuntimePatch)
-        .With(typeof(LiveReplacement), "Process")
-
-    .Build();
-
-// IL rewrite happens here
-var result = engine.RewriteWithResult("TargetApp.dll");
-
-// Runtime patches are applied automatically for PatchMode.RuntimePatch rules.
-// The runtime engine is also reachable directly:
-engine.ApplyRuntimePatch("MyApp.AnotherType", "Method", typeof(Replacement), "Method");
-engine.RemoveRuntimePatch("MyApp.AnotherType", "Method");
+if (RuntimeInjector.IsAvailable)
+{
+    var methods = RuntimeInjector.Inject(assemblyBytes, "MyApp");
+    // methods is the list of "Type::Method" entries that were registered
+}
 ```
+
+The native component ships inside the package as a RID-specific asset. A profiler has to be in place *before* the CLR starts, so the library cannot enable it by itself — `ProfilerBootstrap` prepares the information and the caller starts the process:
+
+```csharp
+var startInfo = new ProcessStartInfo("NetCraft.ServerExe");
+if (ProfilerBootstrap.Apply(startInfo))
+    log.Info(ProfilerBootstrap.Describe());
+
+Process.Start(startInfo);
+```
+
+`Apply` fills in all three variables — `CORECLR_ENABLE_PROFILING`, `CORECLR_PROFILER` and `CORECLR_PROFILER_PATH` — so the CLSID never has to be copied by hand. Under a single-file publish, where the native library is unpacked to a temporary directory, pass its path explicitly with `Apply(startInfo, nativeLibraryPath)`.
+
+The switch is read once at process start: enabling the profiler later has no effect and requires a restart. Expect the target process to run without ReadyToRun and start up slower — disabling ReadyToRun images is a prerequisite for ReJIT.
+
+Limits worth knowing before you reach for it:
+
+- The body is rewritten from the **original bytes**, so it does not contain changes made by load-time rewriting. If both modes hit the same method, the load-time version is replaced wholesale.
+- A method can only be injected once — `GetReJITParameters` claims a request by module plus method, so a second registration for the same method is silently ignored.
+- No generics, no field or string or type tokens, no local-variable rewriting, no exception-handling clauses, and only one-dimensional zero-based arrays.
 
 ## Replacement signatures
 
@@ -161,6 +224,10 @@ public static string GetText() => "replaced";
 
 // MethodBody: same as CallSite
 public static string GetSecret() => "replaced";
+
+// Probe / Mark: same parameters as the host method, plus a label argument when
+// LabelArgumentIndex is set
+public static void OnTick(object self) { }
 
 // NewObj: same params as the constructor, returns the replacement object
 public static ConfigShadow Create(string env) => new("hacked-" + env);
@@ -211,11 +278,12 @@ public static IntPtr GetPtr() => IntPtr.Zero;
 **Limitations:**
 
 - Methods must be JIT-compiled before patching — call them once first
-- Tiered compilation may re-JIT methods, which can overwrite a patch
+- Tiered compilation re-JITs methods as they warm up and overwrites the entry, which wipes the jump. Marking the target `MethodImplAttributes.NoOptimization` disables both inlining and tiering and keeps the patch stable, at the cost of the method's JIT optimization
+- The jmp overwrite is being phased out in favor of `RuntimeInject`
 
 ## Requirements
 
-.NET 10, C# 14. The only dependency is `Mono.Cecil`.
+.NET 10, C# 14. The only managed dependency is `Mono.Cecil`. The native profiler layer ships in the package for `win-x64`, `linux-x64` and `osx-x64`; other platforms are not covered.
 
 ## Repository
 

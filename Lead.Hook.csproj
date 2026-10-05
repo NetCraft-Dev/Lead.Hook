@@ -7,7 +7,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <PackageId>Lead.Hook</PackageId>
-    <Version>2.1.1</Version>
+    <Version>2.1.2</Version>
     <Authors>Lead Contributors</Authors>
     <Description>A dual-mode hook engine for .NET 10. IL rewriting at load time plus runtime native patching, no Harmony required.</Description>
     <PackageTags>hook;il-rewriting;mono.cecil;net10;method-hook;aop</PackageTags>
@@ -29,6 +29,18 @@
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="native/out/win-x64/lead_hook_native.dll"
+          Pack="true" PackagePath="runtimes/win-x64/native/"
+          Condition="Exists('native/out/win-x64/lead_hook_native.dll')" />
+    <None Include="native/out/linux-x64/liblead_hook_native.so"
+          Pack="true" PackagePath="runtimes/linux-x64/native/"
+          Condition="Exists('native/out/linux-x64/liblead_hook_native.so')" />
+    <None Include="native/out/osx-x64/liblead_hook_native.dylib"
+          Pack="true" PackagePath="runtimes/osx-x64/native/"
+          Condition="Exists('native/out/osx-x64/liblead_hook_native.dylib')" />
   </ItemGroup>
 
 </Project>
