@@ -28,9 +28,9 @@ jobs:
             target: x86_64-unknown-linux-gnu
             rid: linux-x64
             file: liblead_hook_native.so
-          # macos-latest 已经是 arm64 机器 编 x64 要在 Intel runner 上做
-          # macos-13 若下线 改回 macos-latest 并给 x64 target 配 cross linker
-          - os: macos-13
+          # macos-13 是 Intel 机器 现在几乎排不到 会被无限挂着
+          # macos-latest 是 arm64 Apple clang 用 --target 就能编出 x64 产物 不需要额外工具链
+          - os: macos-latest
             target: x86_64-apple-darwin
             rid: osx-x64
             file: liblead_hook_native.dylib
@@ -51,6 +51,19 @@ jobs:
           name: native-${{ matrix.rid }}
           path: native/target/${{ matrix.target }}/release/${{ matrix.file }}
           if-no-files-found: error
+
+      # 链接参数写错时符号会被裁掉 但编译与打包都不会报错 编完就地验一下
+      - name: verify exports
+        if: ${{ !contains(matrix.target, 'windows') }}
+        working-directory: native
+        shell: bash
+        run: |
+          lib="target/${{ matrix.target }}/release/${{ matrix.file }}"
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            nm -D "$lib" | grep -E "DllGetClassObject|DllCanUnloadNow"
+          else
+            nm -g "$lib" | grep -E "DllGetClassObject|DllCanUnloadNow"
+          fi
 
   pack:
     name: pack
