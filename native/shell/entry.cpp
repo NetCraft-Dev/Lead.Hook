@@ -19,7 +19,13 @@
 
 //导出符号交给链接器参数 这里只保证不修饰名字
 //Windows 上不能加 dllexport 否则与 combaseapi.h 里 DllGetClassObject 的已有声明链接不一致
+//非 Windows 上必须写明 default 可见性 cc-rs 默认带 -fvisibility=hidden 不写出来符号就是 local 的
+//local 符号进不了动态符号表 CLR 用 dlsym 也就找不到
+#if defined(_WIN32)
 #define LH_EXPORT extern "C"
+#else
+#define LH_EXPORT extern "C" __attribute__((visibility("default")))
+#endif
 
 //Lead.Hook profiler 的标识 必须与 CORECLR_PROFILER 环境变量里的值一致
 //{7A2E4C1B-9D3F-4E58-A6B0-1C5D8F2A3E70}
