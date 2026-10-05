@@ -18,14 +18,9 @@
 #include "com_base.h"
 
 //导出符号交给链接器参数 这里只保证不修饰名字
-//Windows 上不能加 dllexport 否则与 combaseapi.h 里 DllGetClassObject 的已有声明链接不一致
-//非 Windows 上必须写明 default 可见性 cc-rs 默认带 -fvisibility=hidden 不写出来符号就是 local 的
-//local 符号进不了动态符号表 CLR 用 dlsym 也就找不到
-#if defined(_WIN32)
+//DllGetClassObject 与 DllCanUnloadNow 这两个名字由 Rust 侧对外导出 见 lib.rs
+//C++ 这边只提供实现 名字换成 lh_ 前缀 免得两边重名
 #define LH_EXPORT extern "C"
-#else
-#define LH_EXPORT extern "C" __attribute__((visibility("default")))
-#endif
 
 //Lead.Hook profiler 的标识 必须与 CORECLR_PROFILER 环境变量里的值一致
 //{7A2E4C1B-9D3F-4E58-A6B0-1C5D8F2A3E70}
@@ -568,7 +563,7 @@ LH_EXPORT int32_t lh_get_il_function_body(uint64_t module_id, uint32_t method_de
     return static_cast<int32_t>(size);
 }
 
-LH_EXPORT HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppvObject)
+LH_EXPORT HRESULT STDAPICALLTYPE lh_com_get_class_object(REFCLSID rclsid, REFIID riid, void** ppvObject)
 {
     if (ppvObject == nullptr)
         return E_POINTER;
@@ -585,7 +580,7 @@ LH_EXPORT HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID rclsid, REFIID riid,
     return hr;
 }
 
-LH_EXPORT HRESULT STDAPICALLTYPE DllCanUnloadNow()
+LH_EXPORT HRESULT STDAPICALLTYPE lh_com_can_unload_now()
 {
     //常驻 不卸载
     return S_FALSE;

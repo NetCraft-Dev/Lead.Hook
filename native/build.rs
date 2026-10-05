@@ -51,25 +51,4 @@ fn main() {
         .file("shell/com_base.cpp")
         .file("shell/entry.cpp")
         .compile("lead_hook_shell");
-
-    //DllGetClassObject 与 DllCanUnloadNow 没有被任何 Rust 代码引用 链接器会把它们当死代码丢掉
-    //Windows 上显式导出 一举两得 既保留符号又让 CLR 能用 GetProcAddress 找到
-    //PRIVATE 表示只进导出表不进导入库 这两条本来也不需要别人链接
-    if windows {
-        println!("cargo:rustc-link-arg=/EXPORT:DllGetClassObject,PRIVATE");
-        println!("cargo:rustc-link-arg=/EXPORT:DllCanUnloadNow,PRIVATE");
-    } else {
-        //cdylib 在 Unix 上默认只导出 Rust 侧符号 C++ 那两个入口没人调用 会被当死代码裁掉
-        //-u 把它们钉成链接的根 保证定义与所在目标文件都留下 --export-dynamic 再让它们进动态符号表
-        //ld64 的符号名带前导下划线 ELF 的不带 两边写法不同
-        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-            println!("cargo:rustc-link-arg=-Wl,-export_dynamic");
-            println!("cargo:rustc-link-arg=-Wl,-u,_DllGetClassObject");
-            println!("cargo:rustc-link-arg=-Wl,-u,_DllCanUnloadNow");
-        } else {
-            println!("cargo:rustc-link-arg=-Wl,--export-dynamic");
-            println!("cargo:rustc-link-arg=-Wl,--undefined=DllGetClassObject");
-            println!("cargo:rustc-link-arg=-Wl,--undefined=DllCanUnloadNow");
-        }
-    }
 }

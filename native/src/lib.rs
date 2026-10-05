@@ -42,16 +42,32 @@ extern "C" {
     ) -> u32;
 }
 
-//C++ 壳里那两个给 CLR 用的入口 CLR 是靠 dlsym 找它们 不经过 Rust
-//一旦没人引用 链接时 --gc-sections 就会把它们当死代码删掉
-//所以这里登记一下 表明这两个符号必须留着
-extern "C" {
-    fn DllGetClassObject();
-    fn DllCanUnloadNow();
+//CLR 按约定从库里找 DllGetClassObject 与 DllCanUnloadNow 这两个导出名
+//实现在 C++ 壳里 这里只负责转出去
+//不让 C++ 直接导出是因为 cdylib 的符号可见性由 Rust 的链接参数说了算 C++ 侧的全局符号会被降成 local
+//走 #[no_mangle] 从 Rust 导出才稳 三个平台一致
+extern "system" {
+    fn lh_com_get_class_object(
+        rclsid: *const c_void,
+        riid: *const c_void,
+        ppv: *mut *mut c_void,
+    ) -> i32;
+    fn lh_com_can_unload_now() -> i32;
 }
 
-#[used]
-static KEEP_CLR_ENTRY_POINTS: [unsafe extern "C" fn(); 2] = [DllGetClassObject, DllCanUnloadNow];
+#[no_mangle]
+pub unsafe extern "system" fn DllGetClassObject(
+    rclsid: *const c_void,
+    riid: *const c_void,
+    ppv: *mut *mut c_void,
+) -> i32 {
+    lh_com_get_class_object(rclsid, riid, ppv)
+}
+
+#[no_mangle]
+pub unsafe extern "system" fn DllCanUnloadNow() -> i32 {
+    lh_com_can_unload_now()
+}
 
 //RewriteRequest 一条运行时改写请求
 //托管侧把备好的新方法体登记进来 等目标模块就位时兑现
