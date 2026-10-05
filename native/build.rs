@@ -19,6 +19,32 @@ fn main() {
     if !windows {
         build.include("third_party/coreclr/rt");
         build.include("third_party/coreclr/pal");
+
+        //PAL 的头靠 HOST_* 挑架构与系统相关的定义 平时这些由 coreclr 的 CMake 传进来
+        //少一个就会撞上 pal.h 里那句 #error Unknown architecture
+        match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+            Ok("x86_64") => {
+                build.define("HOST_AMD64", None);
+                build.define("HOST_64BIT", None);
+            }
+            Ok("aarch64") => {
+                build.define("HOST_ARM64", None);
+                build.define("HOST_64BIT", None);
+            }
+            Ok("x86") => {
+                build.define("HOST_X86", None);
+            }
+            Ok("arm") => {
+                build.define("HOST_ARM", None);
+            }
+            _ => {}
+        }
+        build.define("HOST_UNIX", None);
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+            build.define("HOST_OSX", None);
+        } else {
+            build.define("HOST_LINUX", None);
+        }
     }
 
     build
