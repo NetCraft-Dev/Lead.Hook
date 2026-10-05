@@ -61,15 +61,15 @@ static const IID IidProfilerInfo7 = {
     0x9AEECC0D, 0x63E0, 0x4187, {0x8C, 0x00, 0xE3, 0x12, 0xF5, 0x03, 0xF6, 0x63}};
 
 //SameIid 两个 IID 是否相等 逐字节比
-//C++ 下 Windows SDK 把 REFIID 定成引用 coreclr 的 PAL 定成指针 取值方式两边不同
+//C++ 下两边的 REFIID 都是引用 所以取地址再用
 static bool SameIid(REFIID left, const IID& right)
 {
-#if defined(_WIN32)
     return memcmp(&left, &right, sizeof(IID)) == 0;
-#else
-    return memcmp(left, &right, sizeof(IID)) == 0;
-#endif
 }
+
+//WCHAR 在 Windows 上是 wchar_t 在非 Windows 上 coreclr 定成 char16_t
+//宽字符串一律按这个类型存 直接用 wchar_t 在非 Windows 上会对不上接口签名
+using WideString = std::basic_string<WCHAR>;
 
 //Rust 侧导出的回调 壳只做搬运
 extern "C" {
@@ -258,13 +258,13 @@ static std::string Hex4(unsigned value)
 }
 
 //ToWide 类型名与方法名都是 ASCII 逐字节扩展即可 不引平台 API 便于跨平台
-static std::wstring ToWide(const char* text)
+static WideString ToWide(const char* text)
 {
-    std::wstring wide;
+    WideString wide;
     if (text == nullptr)
         return wide;
     for (const char* cursor = text; *cursor != '\0'; ++cursor)
-        wide.push_back(static_cast<wchar_t>(static_cast<unsigned char>(*cursor)));
+        wide.push_back(static_cast<WCHAR>(static_cast<unsigned char>(*cursor)));
     return wide;
 }
 
@@ -272,7 +272,7 @@ static std::wstring ToWide(const char* text)
 static void ToNarrow(const WCHAR* source, char* buffer, uint32_t capacity)
 {
     uint32_t index = 0;
-    for (; source[index] != L'\0' && index + 1 < capacity; ++index)
+    for (; source[index] != 0 && index + 1 < capacity; ++index)
         buffer[index] = static_cast<char>(source[index]);
     buffer[index] = '\0';
 }
@@ -308,8 +308,8 @@ LH_EXPORT uint32_t lh_find_method(uint64_t module_id, const char* type_name, con
     if (import_hr != S_OK || import == nullptr)
         return 0;
 
-    const std::wstring wide_type = ToWide(type_name);
-    const std::wstring wide_method = ToWide(method_name);
+    const WideString wide_type = ToWide(type_name);
+    const WideString wide_method = ToWide(method_name);
 
     uint32_t found = 0;
     mdTypeDef type_def = mdTypeDefNil;
@@ -342,7 +342,7 @@ LH_EXPORT uint32_t lh_find_method(uint64_t module_id, const char* type_name, con
 //FindOrCreateAssemblyRef 元数据里已有同名项就复用 没有才新建
 //重复建会在表里留下多条同名记录 后续 token 会跟托管侧算的错位
 static mdAssemblyRef FindOrCreateAssemblyRef(IMetaDataAssemblyImport* assembly_import,
-                                             IMetaDataAssemblyEmit* assembly_emit, const std::wstring& name)
+                                             IMetaDataAssemblyEmit* assembly_emit, const WideString& name)
 {
     if (assembly_import != nullptr)
     {
@@ -421,7 +421,7 @@ LH_EXPORT uint32_t lh_ensure_type_ref(uint64_t module_id, const char* assembly_n
     g_profiler_info->GetModuleMetaData(static_cast<ModuleID>(module_id), ofRead | ofWrite, IID_IMetaDataEmit,
                                        reinterpret_cast<IUnknown**>(&emit));
 
-    const std::wstring wide = ToWide(type_name);
+    const WideString wide = ToWide(type_name);
 
     //先看模块里有没有现成的 有就复用
     if (import != nullptr)
@@ -474,7 +474,7 @@ LH_EXPORT uint32_t lh_ensure_member_ref(uint64_t module_id, const char* assembly
     g_profiler_info->GetModuleMetaData(static_cast<ModuleID>(module_id), ofRead | ofWrite, IID_IMetaDataEmit,
                                        reinterpret_cast<IUnknown**>(&emit));
 
-    const std::wstring wide = ToWide(member_name);
+    const WideString wide = ToWide(member_name);
 
     LogNative("member_ref " + std::string(type_name) + "::" + member_name + " type_ref=" + Hex4(type_ref) +
               " import=" + (import != nullptr ? "有" : "无") + " emit=" + (emit != nullptr ? "有" : "无"));
