@@ -5,22 +5,41 @@ fn main() {
     println!("cargo:rerun-if-changed=shell/com_base.h");
     println!("cargo:rerun-if-changed=shell/entry.cpp");
 
-    cc::Build::new()
-        .cpp(true)
-        .std("c++20")
-        //源码里有中文注释 MSVC 默认按本地代码页读会把它们解析坏
-        //加上这个才对 GCC/Clang 无效 它们本来就按 UTF-8 读
-        .flag_if_supported("/utf-8")
-        .include("third_party/coreclr")
+    let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+
+    let mut build = cc::Build::new();
+    build.cpp(true).std("c++20");
+    //源码里有中文注释 MSVC 默认按本地代码页读会把它们解析坏
+    //加上这个才对 GCC/Clang 无效 它们本来就按 UTF-8 读
+    build.flag_if_supported("/utf-8");
+    build.include("third_party/coreclr");
+
+    //库里的头分两套 Windows 上 unknwn.h/windows.h 这些由 SDK 提供
+    //非 Windows 没有 SDK coreclr 把它们另收在 pal/inc 与 pal/inc/rt 下 得用它的那一份
+    if !windows {
+        build.include("third_party/coreclr/rt");
+        build.include("third_party/coreclr/pal");
+    }
+
+    build
         .file("shell/com_base.cpp")
         .file("shell/entry.cpp")
         .compile("lead_hook_shell");
 
     //DllGetClassObject 与 DllCanUnloadNow 没有被任何 Rust 代码引用 链接器会把它们当死代码丢掉
-    //这里显式导出 一举两得 既保留符号又让 CLR 能用 GetProcAddress 找到
+    //Windows 上显式导出 一举两得 既保留符号又让 CLR 能用 GetProcAddress 找到
     //PRIVATE 表示只进导出表不进导入库 这两条本来也不需要别人链接
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+    if windows {
         println!("cargo:rustc-link-arg=/EXPORT:DllGetClassObject,PRIVATE");
         println!("cargo:rustc-link-arg=/EXPORT:DllCanUnloadNow,PRIVATE");
+    } else {
+        //cdylib 在 Unix 上默认只导出 Rust 侧符号 C++ 那两个入口会被裁掉
+        //CLR 是用 dlopen+dlsym 找它们的 留着动态符号表才拿得到
+        let flag = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+            "-Wl,-export_dynamic"
+        } else {
+            "-Wl,--export-dynamic"
+        };
+        println!("cargo:rustc-link-arg={flag}");
     }
 }

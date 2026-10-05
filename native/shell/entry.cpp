@@ -29,6 +29,48 @@ static const GUID CLSID_LeadHookProfiler = {
 //CLR 交过来的 ICorProfilerInfo 接口 门面函数要用
 static ICorProfilerInfo7* g_profiler_info = nullptr;
 
+//下面这些 IID 一律写成文件内的静态常量
+//不写 __uuidof 是因为那是 MSVC 扩展 GCC 与 Clang 上取不到接口的 uuid
+//不引 IID_IUnknown 这类系统名字 是因为非 Windows 平台上 coreclr 只给了声明 定义要使用者自己补
+//写死在这里两边都不依赖外部符号 也不会跟任何库里的定义撞车
+static const IID IidUnknown = {
+    0x00000000, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+static const IID IidClassFactory = {
+    0x00000001, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+static const IID IidProfilerCallback = {
+    0x176FBED1, 0xA55C, 0x4796, {0x98, 0xCA, 0xA9, 0xDA, 0x0E, 0xF8, 0x83, 0xE7}};
+static const IID IidProfilerCallback2 = {
+    0x8A8CC829, 0xCCF2, 0x49FE, {0xBB, 0xAE, 0x0F, 0x02, 0x22, 0x28, 0x07, 0x1A}};
+static const IID IidProfilerCallback3 = {
+    0x4FD2ED52, 0x7731, 0x4B8D, {0x94, 0x69, 0x03, 0xD2, 0xCC, 0x30, 0x86, 0xC5}};
+static const IID IidProfilerCallback4 = {
+    0x7B63B2E3, 0x107D, 0x4D48, {0xB2, 0xF6, 0xF6, 0x1E, 0x22, 0x94, 0x70, 0xD2}};
+static const IID IidProfilerCallback5 = {
+    0x8DFBA405, 0x8C9F, 0x45F8, {0xBF, 0xFA, 0x83, 0xB1, 0x4C, 0xEF, 0x78, 0xB5}};
+static const IID IidProfilerCallback6 = {
+    0xFC13DF4B, 0x4448, 0x4F4F, {0x95, 0x0C, 0xBA, 0x8D, 0x19, 0xD0, 0x0C, 0x36}};
+static const IID IidProfilerCallback7 = {
+    0xF76A2DBA, 0x1D52, 0x4539, {0x86, 0x6C, 0x2A, 0xA5, 0x18, 0xF9, 0xEF, 0xC3}};
+static const IID IidProfilerCallback8 = {
+    0x5BED9B15, 0xC079, 0x4D47, {0xBF, 0xE2, 0x21, 0x5A, 0x14, 0x0C, 0x07, 0xE0}};
+static const IID IidProfilerCallback9 = {
+    0x27583EC3, 0xC8F5, 0x482F, {0x80, 0x52, 0x19, 0x4B, 0x8C, 0xE4, 0x70, 0x5A}};
+static const IID IidProfilerCallback10 = {
+    0xCEC5B60E, 0xC69C, 0x495F, {0x87, 0xF6, 0x84, 0xD2, 0x8E, 0xE1, 0x6F, 0xFB}};
+static const IID IidProfilerInfo7 = {
+    0x9AEECC0D, 0x63E0, 0x4187, {0x8C, 0x00, 0xE3, 0x12, 0xF5, 0x03, 0xF6, 0x63}};
+
+//SameIid 两个 IID 是否相等 逐字节比
+//C++ 下 Windows SDK 把 REFIID 定成引用 coreclr 的 PAL 定成指针 取值方式两边不同
+static bool SameIid(REFIID left, const IID& right)
+{
+#if defined(_WIN32)
+    return memcmp(&left, &right, sizeof(IID)) == 0;
+#else
+    return memcmp(left, &right, sizeof(IID)) == 0;
+#endif
+}
+
 //Rust 侧导出的回调 壳只做搬运
 extern "C" {
 int32_t lh_on_initialize(void* profiler_info_unknown);
@@ -57,17 +99,17 @@ HRESULT STDMETHODCALLTYPE ComBase::QueryInterface(REFIID riid, void** ppvObject)
         return E_POINTER;
 
     const bool known =
-        IsEqualIID(riid, IID_IUnknown) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback)) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback2)) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback3)) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback4)) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback5)) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback6)) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback7)) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback8)) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback9)) ||
-        IsEqualIID(riid, __uuidof(ICorProfilerCallback10));
+        SameIid(riid, IidUnknown) ||
+        SameIid(riid, IidProfilerCallback) ||
+        SameIid(riid, IidProfilerCallback2) ||
+        SameIid(riid, IidProfilerCallback3) ||
+        SameIid(riid, IidProfilerCallback4) ||
+        SameIid(riid, IidProfilerCallback5) ||
+        SameIid(riid, IidProfilerCallback6) ||
+        SameIid(riid, IidProfilerCallback7) ||
+        SameIid(riid, IidProfilerCallback8) ||
+        SameIid(riid, IidProfilerCallback9) ||
+        SameIid(riid, IidProfilerCallback10);
 
     if (!known)
     {
@@ -123,7 +165,7 @@ public:
     {
         if (ppvObject == nullptr)
             return E_POINTER;
-        if (IsEqualIID(riid, IID_IUnknown) || IsEqualIID(riid, __uuidof(IClassFactory)))
+        if (SameIid(riid, IidUnknown) || SameIid(riid, IidClassFactory))
         {
             *ppvObject = static_cast<IClassFactory*>(this);
             AddRef();
@@ -193,7 +235,7 @@ LH_EXPORT int32_t lh_resolve_profiler_info(void* profiler_info_unknown)
         return 0;
 
     auto* unknown = static_cast<IUnknown*>(profiler_info_unknown);
-    const HRESULT hr = unknown->QueryInterface(__uuidof(ICorProfilerInfo7), reinterpret_cast<void**>(&g_profiler_info));
+    const HRESULT hr = unknown->QueryInterface(IidProfilerInfo7, reinterpret_cast<void**>(&g_profiler_info));
     return hr == S_OK ? 0 : -1;
 }
 
@@ -525,7 +567,7 @@ LH_EXPORT HRESULT STDAPICALLTYPE DllGetClassObject(REFCLSID rclsid, REFIID riid,
     if (ppvObject == nullptr)
         return E_POINTER;
 
-    if (!IsEqualCLSID(rclsid, CLSID_LeadHookProfiler))
+    if (!SameIid(rclsid, CLSID_LeadHookProfiler))
         return CLASS_E_CLASSNOTAVAILABLE;
 
     auto* factory = new (std::nothrow) lead_hook::ClassFactory();
