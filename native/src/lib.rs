@@ -42,6 +42,17 @@ extern "C" {
     ) -> u32;
 }
 
+//C++ 壳里那两个给 CLR 用的入口 CLR 是靠 dlsym 找它们 不经过 Rust
+//一旦没人引用 链接时 --gc-sections 就会把它们当死代码删掉
+//所以这里登记一下 表明这两个符号必须留着
+extern "C" {
+    fn DllGetClassObject();
+    fn DllCanUnloadNow();
+}
+
+#[used]
+static KEEP_CLR_ENTRY_POINTS: [unsafe extern "C" fn(); 2] = [DllGetClassObject, DllCanUnloadNow];
+
 //RewriteRequest 一条运行时改写请求
 //托管侧把备好的新方法体登记进来 等目标模块就位时兑现
 struct RewriteRequest {
