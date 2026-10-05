@@ -59,13 +59,17 @@ fn main() {
         println!("cargo:rustc-link-arg=/EXPORT:DllGetClassObject,PRIVATE");
         println!("cargo:rustc-link-arg=/EXPORT:DllCanUnloadNow,PRIVATE");
     } else {
-        //cdylib 在 Unix 上默认只导出 Rust 侧符号 C++ 那两个入口会被裁掉
-        //CLR 是用 dlopen+dlsym 找它们的 留着动态符号表才拿得到
-        let flag = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-            "-Wl,-export_dynamic"
+        //cdylib 在 Unix 上默认只导出 Rust 侧符号 C++ 那两个入口没人调用 会被当死代码裁掉
+        //-u 把它们钉成链接的根 保证定义与所在目标文件都留下 --export-dynamic 再让它们进动态符号表
+        //ld64 的符号名带前导下划线 ELF 的不带 两边写法不同
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+            println!("cargo:rustc-link-arg=-Wl,-export_dynamic");
+            println!("cargo:rustc-link-arg=-Wl,-u,_DllGetClassObject");
+            println!("cargo:rustc-link-arg=-Wl,-u,_DllCanUnloadNow");
         } else {
-            "-Wl,--export-dynamic"
-        };
-        println!("cargo:rustc-link-arg={flag}");
+            println!("cargo:rustc-link-arg=-Wl,--export-dynamic");
+            println!("cargo:rustc-link-arg=-Wl,--undefined=DllGetClassObject");
+            println!("cargo:rustc-link-arg=-Wl,--undefined=DllCanUnloadNow");
+        }
     }
 }

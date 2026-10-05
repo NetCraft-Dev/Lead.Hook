@@ -59,6 +59,9 @@ jobs:
         shell: bash
         run: |
           lib="target/${{ matrix.target }}/release/${{ matrix.file }}"
+          echo "--- symbols mentioning dll ---"
+          nm "$lib" 2>&1 | grep -i "dll" || true
+          echo "--- dynamic table ---"
           if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
             nm -D "$lib" | grep -E "DllGetClassObject|DllCanUnloadNow"
           else
